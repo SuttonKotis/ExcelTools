@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KCP Transfer Intake (prototype)</title>
+<style>
+  :root { font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 15px; }
+  body { max-width: 1060px; margin: 0 auto; padding: 16px 20px 80px; color: #1a1a1a; background: #fafafa; }
+  h1 { font-size: 1.3rem; margin: 0 0 2px; }
+  .sub { color: #666; font-size: .85rem; margin-bottom: 14px; }
+  .bar { position: sticky; top: 0; z-index: 5; background: #fafafa; border-bottom: 1px solid #ddd;
+         padding: 10px 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .bar label { font-weight: 600; font-size: .85rem; }
+  select, input[type=text], textarea { font: inherit; padding: 5px 7px; border: 1px solid #bbb; border-radius: 5px; background: #fff; }
+  section.grp { background: #fff; border: 1px solid #e2e2e2; border-radius: 8px; padding: 12px 16px; margin: 14px 0; }
+  section.grp h2 { font-size: .95rem; margin: 0 0 4px; }
+  section.grp .note { color: #777; font-size: .8rem; margin: 0 0 10px; }
+  .fieldrow { display: grid; grid-template-columns: 215px 1fr; gap: 10px; align-items: center; padding: 5px 0; }
+  .fieldrow > label { font-size: .87rem; font-weight: 600; }
+  .fieldrow small { display: block; font-weight: 400; color: #888; }
+  .chips { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { border: 1px solid #bbb; background: #fff; border-radius: 14px; padding: 3px 12px; cursor: pointer; font: inherit; font-size: .85rem; }
+  .chip.on-Y { background: #d7efd7; border-color: #3a8f3a; font-weight: 700; }
+  .chip.on-N { background: #f6d9d9; border-color: #b04a4a; font-weight: 700; }
+  .chip.on-TBD { background: #fdf0cd; border-color: #c09a2e; font-weight: 700; }
+  .chip.fx-on { background: #dbe7fb; border-color: #3b6dc7; font-weight: 700; }
+  .mode-simple .detail { display: none; }
+  .gone { display: none !important; }
+  .tip { position: relative; }
+  .tip > code { border-bottom: 1px dotted #888; cursor: help; }
+  .tipcard { display: none; position: absolute; left: 0; top: calc(100% + 4px); z-index: 20;
+    width: 380px; background: #fff; border: 1px solid #999; border-radius: 8px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.18); padding: 10px 12px; font-size: .8rem;
+    font-weight: 400; line-height: 1.45; color: #222; white-space: normal; }
+  .tipcard b { color: #555; }
+  .tip:hover .tipcard, .tip:focus-within .tipcard { display: block; }
+  .inline-btn { font-size: .78rem; padding: 2px 8px; margin-left: 6px; cursor: pointer; border: 1px solid #999; border-radius: 5px; background: #f1f1f1; }
+  #footerbar { position: fixed; bottom: 0; left: 0; right: 0; background: #fff; border-top: 2px solid #ccc;
+               padding: 10px 20px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  #unkbadge { background: #fdf0cd; border: 1px solid #c09a2e; border-radius: 6px; padding: 4px 10px; font-size: .85rem; }
+  button.primary { font: inherit; font-weight: 700; padding: 7px 16px; border-radius: 6px; border: 1px solid #2d6a2d; background: #3a8f3a; color: #fff; cursor: pointer; }
+  button.plain { font: inherit; padding: 7px 12px; border-radius: 6px; border: 1px solid #999; background: #eee; cursor: pointer; }
+  #problems { color: #b00020; font-size: .85rem; white-space: pre-line; margin: 8px 0; }
+  #warnings { color: #8a6d1a; font-size: .85rem; white-space: pre-line; margin: 8px 0; }
+  #preview { width: 100%; height: 70px; font-family: ui-monospace, monospace; font-size: .75rem; }
+  .banner { background: #f6d9d9; border: 1px solid #b04a4a; border-radius: 6px; padding: 8px 12px; margin: 10px 0; font-size: .85rem; }
+</style>
+</head>
+<body>
+<h1>Transfer Intake — one offering at a time</h1>
+<div class="sub">Answers become <b>one Catalog row</b> (a CSV fragment the maintainer merges into the master workbook).
+  Honest rule: if you don't know, leave <b>TBD</b> — the tool never punishes honesty, but known facts rank higher.
+  <span id="dataver"></span></div>
+<div id="nodata" class="banner" style="display:none">Data module not found — run <code>node tools/convert-sheet.mjs</code> first.
+  The form still works, but supplier/update pickers are empty.</div>
+
+<div class="bar">
+  <label>Mode:</label>
+  <label><input type="radio" name="mode" value="simple" checked> Simple (minimum viable)</label>
+  <label><input type="radio" name="mode" value="detailed"> Detailed (all 48 columns)</label>
+  <span style="flex:1"></span>
+  <label>Update existing:</label><select id="rowpick"><option value="">— start blank —</option></select>
+  <label class="plain" style="cursor:pointer">Import fragment <input type="file" id="importfile" accept=".csv" style="display:none"></label>
+  <input type="text" id="pastebox" placeholder="⌘V an Excel row here" size="20" title="In Excel: select the whole row (Catalog A:AV or Suppliers A:L), copy, then click here and paste — the form fills from the live sheet.">
+  <span id="pastemsg" style="font-size:.8rem"></span>
+  <button class="plain" id="resetbtn">Reset</button>
+</div>
+
+<form id="f" onsubmit="return false"></form>
+
+<div id="footerbar">
+  <span id="unkbadge"></span>
+  <button class="primary" id="exportbtn">Validate &amp; download CSV</button>
+  <button class="plain" id="copybtn">Copy row (paste into Excel)</button>
+  <button class="plain gone" id="supcopybtn">Copy supplier row</button>
+  <span style="flex:1"></span>
+  <span style="font-size:.8rem;color:#777">fragment = inbox, not storage — after merge, reload from the published data</span>
+</div>
+<div id="problems"></div>
+<div id="warnings"></div>
+<textarea id="preview" readonly placeholder="CSV preview appears here after validation"></textarea>
+
+<script src="../../extension/data/transfer-data.js"></script>
+<script>
+'use strict';
+// ── Vocab: read from the generated data module (converter emits it — worklist
+// A5, done). The literal below is only the fallback when no data module loads. ──
+const KCP_FALLBACK_VOCAB = {
+  categories: ['DTF', 'Supacolor CMYK', 'SP Transfer', 'Vinyl-HTV', 'Vinyl-Printable'],
+  statuses: ['Approved', 'Phase-out', 'Discontinued'],
+  peels: ['TBD', 'H', 'W', 'C', 'H/C', 'W/C', ''],
+  effects: ['puff', 'metallic', 'holographic', 'flock', 'glitter', 'reflective', 'glow', 'uv-shift', '3d', 'dye-block', 'neon'],
+};
+const VOCAB = (typeof KCP_TRANSFER_DATA !== 'undefined' && KCP_TRANSFER_DATA.vocab) ? KCP_TRANSFER_DATA.vocab : KCP_FALLBACK_VOCAB;
+
+// The 48 Catalog columns, in exact sheet order — the export contract.
+const COLUMNS = ['offering_id','supplier','product_name','category','status','decoration_string','preference_rank',
+  'full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects',
+  'over_seam_ok','hat_ok','odd_item_ok','dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok',
+  'fab_cotton_100','fab_preshrunk_cotton','fab_polyester_100','fab_lycra_spandex_blends','fab_nylon',
+  'fab_sublimated_poly','fab_cordura','fab_leather','fab_neoprene','fab_polypropylene',
+  'app_temp_f','press_time_sec','peel','layerable','thickness_microns','matte_gloss_0_5','detail_cut_0_5',
+  'stretchability_0_5','carrier_tack_0_3','cpsia_certified','min_w_in','min_h_in','max_w_in','max_h_in','min_qty',
+  'order_notes','verified','last_verified'];
+
+const FLAGS = new Set(['full_color','pantone_match','metallic_ok','fine_detail','over_seam_ok','hat_ok','odd_item_ok',
+  'dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok','verified','layerable','cpsia_certified',
+  'fab_cotton_100','fab_preshrunk_cotton','fab_polyester_100','fab_lycra_spandex_blends','fab_nylon',
+  'fab_sublimated_poly','fab_cordura','fab_leather','fab_neoprene','fab_polypropylene']);
+
+const NUMS = new Set(['preference_rank','max_spot_colors','app_temp_f','press_time_sec','thickness_microns',
+  'matte_gloss_0_5','detail_cut_0_5','stretchability_0_5','carrier_tack_0_3','min_w_in','min_h_in','max_w_in','max_h_in','min_qty']);
+
+// Simple mode = identity + the columns the recommendation engine actually reads
+// most often (the "minimum viable to be used" set). Everything else exports TBD/blank.
+const SIMPLE = new Set(['offering_id','supplier','product_name','category','status','decoration_string','preference_rank',
+  'full_color','app_temp_f','over_seam_ok','hat_ok','odd_item_ok','dye_block_built_in',
+  'fab_cotton_100','fab_polyester_100','fab_lycra_spandex_blends','max_w_in','max_h_in','min_qty','verified','last_verified']);
+
+// Engine-consumed gates (unknowns here demote the row in ranking).
+const ENGINE_GATES = ['app_temp_f','full_color','pantone_match','metallic_ok','fine_detail','over_seam_ok','hat_ok',
+  'odd_item_ok','dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok','fab_cotton_100',
+  'fab_polyester_100','fab_lycra_spandex_blends','fab_nylon','fab_sublimated_poly','fab_cordura','fab_leather',
+  'fab_neoprene','fab_polypropylene','max_w_in','max_h_in','min_qty'];
+
+const GROUPS = [
+  ['Identity & ordering', 'Who sells it, what it is, how it ranks. All required.',
+    ['offering_id','supplier','product_name','category','status','decoration_string','preference_rank']],
+  ['Artwork capability', 'Can it render this art?',
+    ['full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects']],
+  ['Placement', 'Can it be pressed there?', ['over_seam_ok','hat_ok','odd_item_ok']],
+  ['Garment protection', 'Will the garment ruin the print?',
+    ['dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok']],
+  ['Fabric ratings', 'Rated / not rated / unknown, per fabric (the WH-chart axes).',
+    ['fab_cotton_100','fab_preshrunk_cotton','fab_polyester_100','fab_lycra_spandex_blends','fab_nylon',
+     'fab_sublimated_poly','fab_cordura','fab_leather','fab_neoprene','fab_polypropylene']],
+  ['Application specs', 'The physics numbers. app_temp_f is the most load-bearing number on the sheet.',
+    ['app_temp_f','press_time_sec','peel','layerable']],
+  ['Physical, size & quantity', 'Hand-feel specs, the printable window, MOQ.',
+    ['thickness_microns','matte_gloss_0_5','detail_cut_0_5','stretchability_0_5','carrier_tack_0_3','cpsia_certified',
+     'min_w_in','min_h_in','max_w_in','max_h_in','min_qty']],
+  ['Housekeeping', 'Free-text quirks + verification state.', ['order_notes','verified','last_verified']],
+];
+
+const HINTS = {
+  offering_id: 'permanent key — never reused. Use the supplier series (e.g. CASC-004)',
+  supplier: 'must exist on the Suppliers tab before this row can merge',
+  decoration_string: 'ships VERBATIM into the action box. House format: Transfer - {Supplier/Line} {Product}',
+  preference_rank: 'lower wins. Bands: DTF 10–26 · Supacolor 30–37 · vinyl 40–55 · SP/legacy 80–90 — ask a lead',
+  max_spot_colors: 'non-full-color only; blank = unlimited',
+  effects: 'only what the product actually offers',
+  app_temp_f: '°F. Number or TBD — never guess',
+  peel: 'hot / warm / cold carrier peel',
+  min_qty: 'MOQ. Below it the tool eliminates the row',
+  verified: 'Y only after checking the row against the supplier’s real spec',
+  last_verified: 'YYYY-MM-DD',
+  order_notes: 'quirks that ride along on the result card. Facts belong in real columns, not here',
+};
+
+// ── Tooltips: what is this? why does the tool care? how do I tell? ──
+const TIPS = {
+  offering_id: { what: 'The permanent unique key for this exact supplier + product row (e.g. SUPA-007).', why: 'Everything refers to rows by this id — reports, test fixtures, changelogs. It is never reused or renumbered, even after the product is discontinued.', how: 'You assign it: next number in the supplier’s series. The "suggest next" button does this from the loaded data.' },
+  supplier: { what: 'The company this offering is ordered from, exactly as named on the Suppliers tab.', why: 'The tool joins to that tab for turnaround and preference weight; an exact-string mismatch fails the build.', how: 'Pick from the list. If they’re not on it, choose "(other)" and fill the new-supplier section that appears.' },
+  product_name: { what: 'The supplier’s real product name, verbatim from their catalog (e.g. "Headwear Transfer", "EasyWeed Sub Block").', why: 'Shown on the result card — it is what someone actually orders.', how: 'Copy it off the spec sheet or catalog page. Don’t paraphrase.' },
+  category: { what: 'Which of the five transfer families this product belongs to.', why: 'Rules act on families (e.g. Pantone boosts Supacolor CMYK), and reporting groups by it.', how: 'Cut colored vinyl → Vinyl-HTV. White vinyl that gets printed then contour-cut → Vinyl-Printable. A screen print made on release paper → SP Transfer. Ink + adhesive powder on clear film → DTF. Supacolor’s CMYK-over-screenprint-base → Supacolor CMYK.' },
+  status: { what: 'Lifecycle: Approved (recommendable) / Phase-out (recommendable with a warning) / Discontinued (hidden).', why: 'Rows retire instead of being deleted — history matters. Also used to stage prospective products during onboarding.', how: 'Relationship live and orderable → Approved. Being wound down → Phase-out. Gone → Discontinued.' },
+  decoration_string: { what: 'The exact text the tool will type into the action box’s decoration "Other" field.', why: 'It ships VERBATIM — typos and all. House format: Transfer - {Supplier/Line} {Product}.', how: 'Compose it; keep it recognizable to the production team reading the job later.' },
+  preference_rank: { what: 'A 1–99 number; among products that all fit a job, the LOWEST rank wins.', why: 'This is the team’s steering wheel — changing ranks changes winners without touching the tool. Bands today: DTF 10–26 · Supacolor 30–37 · vinyl 40–55 · SP/legacy 80–90.', how: 'Ask a lead where it slots relative to its siblings. Don’t invent it.' },
+  full_color: { what: 'Can this process print continuous full color — gradients, photos, unlimited colors in one imprint?', why: 'When a job’s art is full-color (CMYK color set), every N row is eliminated on the spot.', how: 'Printed processes (DTF, Supacolor, printable HTV) → Y. Cut vinyl → N: the color IS the material. Spot-ink SP transfers → N. If the sample page shows a photo or gradient, it’s Y.' },
+  max_spot_colors: { what: 'For non-full-color processes: how many distinct ink/material colors one imprint can carry.', why: 'Three-spot-color art eliminates anything maxed at 1 or 2, with the reason shown.', how: 'Cut vinyl = 1 (one color per layer). SP transfers = the supplier’s screen count (Howard ~6). Leave blank for full-color rows (no limit / not applicable).' },
+  pantone_match: { what: 'Will the supplier hit a specific PMS number, not just get close?', why: 'Pantone-match jobs eliminate N rows AND boost the Supacolor family to the top.', how: 'Spec language like "PMS matching available" → Y. Standard CMYK DTF → N (approximation only). The direct question: "can you hit PMS 186C exactly?"' },
+  metallic_ok: { what: 'True metallic INK availability. Different thing from metallic-LOOK vinyl — that belongs in effects as "metallic".', why: 'Metallic-ink jobs eliminate N rows and boost Supacolor.', how: 'Supplier lists metallic/foil ink options → Y. DTF → N (no metallic ink exists for it).' },
+  fine_detail: { what: 'Holds very fine detail — roughly 1pt lines and serifs or finer.', why: 'Fine-detail jobs eliminate N rows.', how: 'Find the spec’s minimum line weight: 1pt or finer → Y (Supacolor holds 0.6pt). DTF’s 1.5pt adhesive floor → N. Vinyl: judge from the chart’s detail-cut rating.' },
+  effects: { what: 'Special looks this product itself offers, from the fixed vocabulary (puff, glitter, glow…). Hover each chip for what it means.', why: 'When the artist requests an effect, only rows listing that effect survive.', how: 'It’s usually the product’s identity — "Easy Puff" → puff. Blank means a plain transfer; that’s a complete answer, not a missing one.' },
+  over_seam_ok: { what: 'Can it be pressed across a seam ridge (cap seams, pocket edges) and survive — full bond, no cracking?', why: '"Art crosses a seam" eliminates every N row. This cell decides real hat jobs.', how: 'Rarely printed on spec sheets — ask the supplier directly. Family instincts: vinyl usually Y (doesn’t crack), SP Transfer N (hard family fact), plain DTF unproven → TBD, Supacolor Headwear explicitly Y.' },
+  hat_ok: { what: 'Rated for hats and structured caps (hat press, curved platen, small panel).', why: 'Hat-surface jobs eliminate N rows; unrated (TBD) survives with a caveat.', how: 'Supplier mentions headwear/caps → Y. A product sized for chest prints with no cap mention → ask before assuming.' },
+  odd_item_ok: { what: 'Rated for bags, totes, koozies, promo and soft goods — a different pressing problem than hats.', why: 'Odd-surface jobs check this (Supacolor solves it with a separate Promo product — hence a separate column).', how: 'Supplier lists bags/promo applications → Y. Otherwise ask.' },
+  dye_block_built_in: { what: 'The transfer carries its own dye-blocker layer that stops garment dye from bleeding up into the art.', why: 'Dye-sublimated garments (camo, all-over prints) REQUIRE this — every row without it dies on those jobs. The classic failure: a white print turning pink on a red poly jersey weeks later.', how: 'Spec words: "blocker", "sub-block", "dye-block", "bleed-resistant" → Y. Plain DTF → N (no blocker exists for it).' },
+  waterproof_ok: { what: 'Safe on waterproofed / DWR-coated shells — fabrics that normally scorch or delaminate under press heat.', why: 'Coated-garment jobs keep only explicitly rated rows.', how: 'Only an explicit supplier rating counts (e.g. Supacolor Soft Shell Blocker). "We don’t rate that" → N. Silence → TBD.' },
+  light_garments_only: { what: 'Product only works on white/cream garments — e.g. a transparent-carrier product whose border would show on colors.', why: 'On dark garments, Y rows are eliminated (the tool checks the garment swatch shade).', how: 'Spec says "for light/white garments" or the carrier is transparent → Y. Most products → N.' },
+  pigment_dye_ok: { what: 'Rated for pigment-dyed and tie-dye garments (the Comfort Colors world), which press cooler and can shift color.', why: 'Those garment classes keep only rated/unknown rows — one of the most common real jobs.', how: 'Ask: "OK on Comfort Colors / pigment-dyed goods?" A spec mention of pigment dye → Y.' },
+  fab_cotton_100: { what: 'Adhesive rated for 100% cotton.', why: 'Cotton-garment jobs check this rating.', how: 'From the compatibility chart or spec. Cotton is the friendliest fabric — usually Y.' },
+  fab_preshrunk_cotton: { what: 'The WH chart’s separate rating for preshrunk cotton.', why: 'Kept for chart fidelity; the tool’s cotton check currently reads fab_cotton_100 (wiring/retiring this column is a pending lead decision).', how: 'Copy the chart column if you have it; don’t chase suppliers for it.' },
+  fab_polyester_100: { what: 'Adhesive rated for 100% polyester.', why: '100% poly garments (Sport-Tek etc.) check this.', how: 'Chart/spec. Low-temp products usually Y; high-temp products often N (poly scorches ~300°F+).' },
+  fab_lycra_spandex_blends: { what: 'Rated for stretch blends (lycra/spandex) — and today the tool’s stand-in column for ALL cotton/poly blends.', why: 'Any 1–99% poly answer routes here, so this cell fires constantly.', how: 'Chart "blends/lycra" column; a product marketed for performance/stretch wear → likely Y.' },
+  fab_nylon: { what: 'Rated for nylon — slick, heat-shy (jackets, bags).', why: 'The "nylon" special-material flag keeps only rated rows.', how: 'Explicit rating only; many products burn or won’t bond on nylon → N. Ask for a nylon-specific adhesive note.' },
+  fab_sublimated_poly: { what: 'Rated for dye-sublimated polyester — camo and all-over prints, the dye-migration minefield.', why: 'Every dye-sub job checks this on every row, in addition to the blocker rule.', how: '"Sublimation-safe" / "anti-migration" language → Y. Ask directly; guessing here ruins jerseys.' },
+  fab_cordura: { what: 'Rated for Cordura — rough ballistic nylon (packs, gear).', why: 'Cordura-flagged jobs keep only rated rows.', how: 'Explicit rating only. Rare — expect N or TBD.' },
+  fab_leather: { what: 'Rated for leather / PU leather (patches, bags, tags).', why: 'Leather-flagged jobs.', how: 'Explicit rating; some low-temp films do carry one.' },
+  fab_neoprene: { what: 'Rated for neoprene (koozies, sleeves) — foamy and heat-sensitive.', why: 'Neoprene-flagged jobs.', how: 'Explicit rating; ask.' },
+  fab_polypropylene: { what: 'Rated for polypropylene (cheap woven totes) — melts easily; "does not react well to heat".', why: 'Polypro-flagged jobs keep only rated rows.', how: 'Needs an explicit low-temp rating; usually N.' },
+  app_temp_f: { what: 'The application temperature in °F from the supplier’s pressing instructions.', why: 'THE most load-bearing number on the sheet — compared against the garment’s temperature window on every single run. While it’s TBD, every pick of this row carries a caveat and loses known-beats-unknown ties.', how: 'The spec line that reads like "press at 305°F for 10 seconds". Enter the number or TBD — never guess.' },
+  press_time_sec: { what: 'Seconds under the press, from the same spec line as the temperature.', why: 'Shown on the result card for the pressing team (doesn’t change which row wins).', how: 'Spec pressing instructions.' },
+  peel: { what: 'When the carrier comes off: Hot, Warm, or Cold (H/W/C, or combos like H/C).', why: 'Application detail on the result card — get it wrong and the transfer lifts.', how: 'Spec says "hot peel" / "cold peel".' },
+  layerable: { what: 'Can be pressed over/under another layer (multi-layer vinyl designs).', why: 'Reference for layered vinyl work.', how: 'Chart layerable rating; glitter and thick specialty films are usually N.' },
+  thickness_microns: { what: 'Material thickness in microns — the hand-feel number.', why: 'Reference (thin = softer hand).', how: 'The product data sheet.' },
+  matte_gloss_0_5: { what: 'Finish on the WH chart’s 0 (matte) – 5 (gloss) scale.', why: 'Reference for look-matching.', how: 'Chart value.' },
+  detail_cut_0_5: { what: 'How finely the material cuts, 0–5 chart scale.', why: 'Reference; informs the fine_detail call for vinyl.', how: 'Chart value.' },
+  stretchability_0_5: { what: 'Stretch tolerance, 0–5 chart scale (athletic wear).', why: 'Reference.', how: 'Chart value.' },
+  carrier_tack_0_3: { what: 'Carrier stickiness, 0–3 chart scale (affects weeding and placement).', why: 'Reference.', how: 'Chart value.' },
+  cpsia_certified: { what: 'CPSIA-compliant for children’s products.', why: 'Compliance reference for youth goods.', how: 'Ask the supplier for the certification doc; Y only with paper in hand.' },
+  min_w_in: { what: 'Smallest printable art width, inches.', why: 'Art smaller than the product’s minimum can’t be produced cleanly (enforcement landing per the worklist).', how: 'Spec minimum imprint size (e.g. Supacolor 1.5×1.5).' },
+  min_h_in: { what: 'Smallest printable art height, inches.', why: 'Pairs with min_w_in.', how: 'Same spec line.' },
+  max_w_in: { what: 'Largest single-imprint width, inches — usually the sheet or roll width.', why: 'Art wider than this eliminates the row, with the reason shown.', how: 'Sheet dimensions on the spec (A3 sheet = 11.69 × 16.54; rolls can be 22"+).' },
+  max_h_in: { what: 'Largest single-imprint height, inches.', why: 'Pairs with max_w_in.', how: 'Sheet/roll length on the spec.' },
+  min_qty: { what: 'Minimum order quantity.', why: 'Jobs below the MOQ eliminate the row.', how: 'Pricing page or rep quote. DTF is often 1; Supacolor 6–10.' },
+  order_notes: { what: 'Free-text quirks that ride along on the result card: portals, contacts, adhesive notes.', why: 'Display only — anything decision-bearing belongs in a real column, not here.', how: 'Whatever production must know at order time ("order via portal; Daniel & Jen").' },
+  verified: { what: 'A human has checked this WHOLE row against the supplier’s actual published spec.', why: 'Unverified rows still recommend, but the artist sees a ⚠ on every pick.', how: 'Only flip to Y after a real side-by-side check — and set last_verified when you do. TBD cells can remain; verified says the filled cells are right.' },
+  last_verified: { what: 'The date of that check, YYYY-MM-DD.', why: 'Staleness audit — old dates are re-check candidates.', how: 'The "today" button when you verify.' },
+};
+const FX_TIPS = { puff: '3D foam — raised, pillowy surface', metallic: 'metal-look finish (vinyl look, not metallic ink)', holographic: 'rainbow-shifting foil look', flock: 'fuzzy velvet texture', glitter: 'sparkle flake', reflective: 'retro-reflective — lights up in headlights (safety wear)', glow: 'glow-in-the-dark', 'uv-shift': 'changes color in sunlight', '3d': 'dimensional/domed surface', 'dye-block': 'variant with a dye-blocker layer', neon: 'fluorescent brights' };
+const FLAG_TIP = { Y: 'Yes — confirmed for this product', N: 'No — confirmed NOT for this product ("we don’t rate that" counts as N)', TBD: 'Honestly unknown — never punished, but known facts rank higher. Fill it when the supplier answers.' };
+
+// ── New-supplier sub-form: the Suppliers-tab row contract ──
+const SUP_COLUMNS = ['supplier','makes','applies','cuts','categories','turnaround_days_make','turnaround_days_apply',
+  'rush_available','preference_weight','status','contact_notes','last_verified'];
+const SUP_FLAGS = new Set(['makes', 'applies', 'cuts', 'rush_available']);
+const SUP_NUMS = new Set(['turnaround_days_make', 'turnaround_days_apply', 'preference_weight']);
+const SUP_HINTS = {
+  makes: 'do they produce transfers?', applies: 'do they press?', cuts: 'do they cut vinyl?',
+  categories: 'semicolon list of families they serve, e.g. DTF; SP Transfer',
+  turnaround_days_make: 'days', turnaround_days_apply: 'days (blank if they don’t apply)',
+  preference_weight: 'supplier tiebreak, lower = preferred (peers run 10–90) — ask a lead',
+  contact_notes: 'people, portals, quirks', last_verified: 'YYYY-MM-DD',
+};
+const SUP_TIPS = {
+  makes: { what: 'They PRODUCE transfers (print/screen/cut product and ship it).', why: 'Capability directory — who can be a source of goods.', how: 'They sell you physical transfers → Y. Press-only shops → N.' },
+  applies: { what: 'They PRESS transfers onto garments as a service.', why: 'Who can decorate when we don’t press in-house.', how: 'They accept garments for decoration → Y.' },
+  cuts: { what: 'They cut vinyl (plotter service).', why: 'Vinyl workflow directory.', how: 'Cutting listed as a service → Y.' },
+  categories: { what: 'Transfer families they serve, as a semicolon list (e.g. DTF; SP Transfer).', why: 'Quick directory of who does what.', how: 'From their product line.' },
+  turnaround_days_make: { what: 'Typical days for them to produce an order.', why: 'Ranking tiebreak (faster wins ties) and shown with every recommendation.', how: 'The quoted lead time from the rep. Number or TBD.' },
+  turnaround_days_apply: { what: 'Days to press goods once they arrive.', why: 'Timeline display.', how: 'Rep quote; leave blank if they don’t apply.' },
+  rush_available: { what: 'A rush service exists.', why: 'Surfaced when timelines pinch.', how: 'Ask the rep.' },
+  preference_weight: { what: 'Supplier-level tiebreak — lower = preferred (peers run 10–90 today).', why: 'Breaks ties when two products share a preference_rank.', how: 'A lead decision, relative to the existing bench. Ask; don’t invent.' },
+  status: { what: 'Supplier lifecycle: Approved / Phase-out / Discontinued.', why: 'A Phase-out supplier taints ALL its rows with a warning.', how: 'State of the relationship, not of any one product.' },
+  contact_notes: { what: 'People, portals, ordering quirks.', why: 'Display for whoever orders.', how: '"Daniel & Jen", "order via po@ with sheet size" — that level.' },
+  last_verified: { what: 'Date this supplier info was last confirmed, YYYY-MM-DD.', why: 'Staleness audit.', how: 'The "today" button after you confirm with them.' },
+};
+
+const DATA = (typeof KCP_TRANSFER_DATA !== 'undefined') ? KCP_TRANSFER_DATA
+  : { catalog: [], suppliers: {}, meta: { data_version: '(no data module)', schema_version: '—' } };
+
+const state = {};
+function defaults() {
+  for (const c of COLUMNS) state[c] = FLAGS.has(c) ? 'TBD' : (c === 'peel' ? 'TBD' : (c === 'status' ? 'Approved' : ''));
+}
+const supState = {};
+function supDefaults() {
+  for (const c of SUP_COLUMNS) supState[c] = SUP_FLAGS.has(c) ? 'TBD' : (c === 'status' ? 'Approved' : '');
+}
+
+// ── Build the form ──
+const form = document.getElementById('f');
+function tipHtml(col, hints, tips) {
+  const t = tips[col];
+  const code = t
+    ? `<span class="tip"><code tabindex="0">${col}</code><span class="tipcard"><b>What:</b> ${t.what}<br><b>Why the tool cares:</b> ${t.why}<br><b>How to tell:</b> ${t.how}</span></span>`
+    : `<code>${col}</code>`;
+  return code + (hints[col] ? `<small>${hints[col]}</small>` : '');
+}
+function fieldControl(col) {
+  if (FLAGS.has(col)) {
+    const div = document.createElement('div'); div.className = 'chips'; div.dataset.col = col;
+    for (const v of ['Y', 'N', 'TBD']) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = v;
+      b.title = FLAG_TIP[v];
+      b.onclick = () => { state[col] = v; paintChips(div); refresh(); };
+      div.appendChild(b);
+    }
+    return div;
+  }
+  if (col === 'effects') {
+    const div = document.createElement('div'); div.className = 'chips'; div.dataset.col = col;
+    for (const fx of VOCAB.effects) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = fx;
+      b.title = FX_TIPS[fx] || '';
+      b.onclick = () => {
+        const set = new Set(state.effects ? state.effects.split(';').map((s) => s.trim()).filter(Boolean) : []);
+        set.has(fx) ? set.delete(fx) : set.add(fx);
+        state.effects = [...set].join('; ');
+        paintFx(div); refresh();
+      };
+      div.appendChild(b);
+    }
+    return div;
+  }
+  if (col === 'category' || col === 'status' || col === 'peel') {
+    const sel = document.createElement('select'); sel.dataset.col = col;
+    const opts = col === 'category' ? [''].concat(VOCAB.categories) : col === 'status' ? VOCAB.statuses : VOCAB.peels;
+    for (const o of opts) { const op = document.createElement('option'); op.value = o; op.textContent = o === '' ? '—' : o; sel.appendChild(op); }
+    sel.onchange = () => { state[col] = sel.value; refresh(); };
+    return sel;
+  }
+  if (col === 'supplier') {
+    const wrap = document.createElement('span');
+    const sel = document.createElement('select'); sel.dataset.col = col;
+    const names = Object.keys(DATA.suppliers).sort();
+    sel.appendChild(new Option('—', ''));
+    for (const n of names) sel.appendChild(new Option(n, n));
+    sel.appendChild(new Option('(other — not on Suppliers tab yet)', '__other__'));
+    const other = document.createElement('input'); other.type = 'text'; other.placeholder = 'new supplier name';
+    other.style.display = 'none'; other.style.marginLeft = '6px';
+    sel.onchange = () => { other.style.display = sel.value === '__other__' ? '' : 'none';
+      state.supplier = sel.value === '__other__' ? other.value : sel.value; refresh(); };
+    other.oninput = () => { state.supplier = other.value; refresh(); };
+    wrap.append(sel, other);
+    return wrap;
+  }
+  const inp = document.createElement('input'); inp.type = 'text'; inp.dataset.col = col;
+  if (NUMS.has(col)) { inp.placeholder = 'number or TBD'; inp.size = 10; }
+  if (col === 'order_notes') inp.size = 60;
+  if (col === 'decoration_string' || col === 'product_name') inp.size = 40;
+  inp.oninput = () => { state[col] = inp.value; refresh(); };
+  const wrap = document.createElement('span'); wrap.appendChild(inp);
+  if (col === 'offering_id') addBtn(wrap, 'suggest next', suggestId);
+  if (col === 'decoration_string') addBtn(wrap, 'suggest', suggestDecoration);
+  if (col === 'last_verified') addBtn(wrap, 'today', () => { state.last_verified = today(); syncInputs(); });
+  return wrap;
+}
+function addBtn(wrap, label, fn) {
+  const b = document.createElement('button'); b.type = 'button'; b.className = 'inline-btn'; b.textContent = label;
+  b.onclick = () => { fn(); refresh(); };
+  wrap.appendChild(b);
+}
+function build() {
+  for (const [title, note, cols] of GROUPS) {
+    const sec = document.createElement('section'); sec.className = 'grp';
+    if (!cols.some((c) => SIMPLE.has(c))) sec.classList.add('detail');
+    sec.innerHTML = `<h2>${title}</h2><p class="note">${note}</p>`;
+    for (const col of cols) {
+      const row = document.createElement('div'); row.className = 'fieldrow'; row.dataset.field = col;
+      if (!SIMPLE.has(col)) row.classList.add('detail');
+      const lab = document.createElement('label');
+      lab.innerHTML = tipHtml(col, HINTS, TIPS);
+      row.append(lab, fieldControl(col));
+      sec.appendChild(row);
+    }
+    form.appendChild(sec);
+  }
+  buildSup();
+}
+
+function supControl(col) {
+  if (SUP_FLAGS.has(col)) {
+    const div = document.createElement('div'); div.className = 'chips'; div.dataset.supcol = col;
+    for (const v of ['Y', 'N', 'TBD']) {
+      const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = v;
+      b.title = FLAG_TIP[v];
+      b.onclick = () => { supState[col] = v; syncSup(); };
+      div.appendChild(b);
+    }
+    return div;
+  }
+  if (col === 'status') {
+    const sel = document.createElement('select'); sel.dataset.supcol = col;
+    for (const o of VOCAB.statuses) sel.appendChild(new Option(o, o));
+    sel.onchange = () => { supState[col] = sel.value; };
+    return sel;
+  }
+  const inp = document.createElement('input'); inp.type = 'text'; inp.dataset.supcol = col;
+  if (SUP_NUMS.has(col)) { inp.placeholder = 'number or TBD'; inp.size = 10; }
+  if (col === 'contact_notes' || col === 'categories') inp.size = 50;
+  inp.oninput = () => { supState[col] = inp.value; };
+  const wrap = document.createElement('span'); wrap.appendChild(inp);
+  if (col === 'last_verified') addBtn(wrap, 'today', () => { supState.last_verified = today(); syncSup(); });
+  return wrap;
+}
+function buildSup() {
+  const sec = document.createElement('section'); sec.className = 'grp gone'; sec.id = 'supsec';
+  sec.innerHTML = '<h2>New supplier — its Suppliers-tab row</h2>' +
+    '<p class="note">This supplier isn’t on the Suppliers tab yet. Fill its row here — export produces a ' +
+    'second fragment, and the maintainer merges the supplier row <b>first</b> (supplier before products, always).</p>';
+  for (const col of SUP_COLUMNS) {
+    if (col === 'supplier') continue; // the name comes from the picker's free-text box
+    const row = document.createElement('div'); row.className = 'fieldrow';
+    const lab = document.createElement('label');
+    lab.innerHTML = tipHtml(col, SUP_HINTS, SUP_TIPS);
+    row.append(lab, supControl(col));
+    sec.appendChild(row);
+  }
+  form.appendChild(sec);
+}
+
+// ── State ⇄ UI sync ──
+function paintChips(div) {
+  const col = div.dataset.col;
+  for (const b of div.children) b.className = 'chip' + (b.textContent === state[col] ? ` on-${state[col]}` : '');
+}
+function paintFx(div) {
+  const set = new Set((state.effects || '').split(';').map((s) => s.trim()).filter(Boolean));
+  for (const b of div.children) b.className = 'chip' + (set.has(b.textContent) ? ' fx-on' : '');
+}
+function syncInputs() {
+  for (const el of form.querySelectorAll('[data-col]')) {
+    const col = el.dataset.col;
+    if (el.classList && el.classList.contains('chips')) { col === 'effects' ? paintFx(el) : paintChips(el); continue; }
+    if (el.tagName === 'SELECT') {
+      if (col === 'supplier') {
+        const known = [...el.options].some((o) => o.value === state.supplier);
+        el.value = state.supplier && known ? state.supplier : (state.supplier ? '__other__' : '');
+        const other = el.parentElement.querySelector('input');
+        other.style.display = el.value === '__other__' ? '' : 'none';
+        if (el.value === '__other__') other.value = state.supplier;
+      } else el.value = state[col];
+      continue;
+    }
+    if (el.tagName === 'INPUT') el.value = state[col];
+  }
+  syncSup();
+  refresh();
+}
+function syncSup() {
+  for (const el of form.querySelectorAll('[data-supcol]')) {
+    const col = el.dataset.supcol;
+    if (el.classList.contains('chips')) {
+      for (const b of el.children) b.className = 'chip' + (b.textContent === supState[col] ? ` on-${supState[col]}` : '');
+    } else if (el.tagName === 'SELECT' || el.tagName === 'INPUT') el.value = supState[col];
+  }
+}
+
+// ── Helpers ──
+function today() { // local date — toISOString() is UTC and rolls to tomorrow in the evening
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+function suggestId() {
+  const mine = DATA.catalog.filter((r) => r.supplier === state.supplier).map((r) => r.offering_id);
+  if (mine.length) {
+    const m = mine[mine.length - 1].match(/^(.*?)(\d+)$/);
+    if (m) { state.offering_id = m[1] + String(Number(m[2]) + 1).padStart(m[2].length, '0'); syncInputs(); return; }
+  }
+  const initials = (state.supplier || 'NEW').split(/\s+/).map((w) => w[0]).join('').replace(/[^A-Za-z]/g, '').toUpperCase() || 'NEW';
+  state.offering_id = `${initials.slice(0, 5)}-001`; syncInputs();
+}
+function suggestDecoration() {
+  const short = (state.supplier || '').replace(/\s*\(.*\)/, '').split(/\s+/).slice(0, 1).join(' ');
+  state.decoration_string = `Transfer - ${short} ${state.product_name}`.replace(/\s+/g, ' ').trim(); syncInputs();
+}
+function rowToState(row) {
+  defaults();
+  for (const col of COLUMNS) {
+    const v = row[col];
+    if (v === undefined) continue;
+    if (v === true) state[col] = 'Y';
+    else if (v === false) state[col] = 'N';
+    else if (v === null) state[col] = FLAGS.has(col) ? 'TBD' : '';
+    else if (Array.isArray(v)) state[col] = v.join('; ');
+    else state[col] = String(v);
+  }
+}
+
+// ── Validate + export ──
+function unknownCount() {
+  return ENGINE_GATES.filter((c) => state[c] === 'TBD' || state[c] === '').length;
+}
+function validate() {
+  const errs = [], warns = [];
+  const req = ['offering_id', 'supplier', 'product_name', 'category', 'status', 'decoration_string', 'preference_rank'];
+  for (const c of req) if (!String(state[c]).trim()) errs.push(`${c}: required`);
+  if (state.offering_id && !/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(state.offering_id)) errs.push('offering_id: letters/digits/dashes only');
+  if (state.offering_id && DATA.catalog.some((r) => r.offering_id === state.offering_id))
+    warns.push(`offering_id ${state.offering_id} already exists — this fragment will be an UPDATE to that row`);
+  if (state.supplier && !(state.supplier in DATA.suppliers)) {
+    if (supActive()) warns.push(`new supplier "${state.supplier}" — export includes a Suppliers-tab fragment; the maintainer merges it FIRST`);
+    else warns.push(`supplier "${state.supplier}" is not on the Suppliers tab — that row must be added before this can merge`);
+  }
+  if (supActive()) {
+    if (!String(supState.preference_weight).trim()) errs.push('supplier preference_weight: required (ask a lead)');
+    for (const c of SUP_NUMS) {
+      const v = String(supState[c]).trim();
+      if (v && v !== 'TBD' && !Number.isFinite(Number(v))) errs.push(`supplier ${c}: must be a number, TBD, or blank`);
+    }
+    const w = Number(supState.preference_weight);
+    if (String(supState.preference_weight).trim() && supState.preference_weight !== 'TBD' &&
+        (!Number.isInteger(w) || w < 1 || w > 99)) errs.push('supplier preference_weight: integer 1–99');
+    if (supState.last_verified && !/^\d{4}-\d{2}-\d{2}$/.test(supState.last_verified)) errs.push('supplier last_verified: YYYY-MM-DD');
+  }
+  if (state.category && !VOCAB.categories.includes(state.category)) errs.push('category: not in vocabulary');
+  if (state.status && !VOCAB.statuses.includes(state.status)) errs.push('status: not in vocabulary');
+  const rank = Number(state.preference_rank);
+  if (state.preference_rank && (!Number.isInteger(rank) || rank < 1 || rank > 99)) errs.push('preference_rank: integer 1–99');
+  for (const c of NUMS) {
+    const v = String(state[c]).trim();
+    if (v && v !== 'TBD' && !Number.isFinite(Number(v))) errs.push(`${c}: must be a number, TBD, or blank`);
+  }
+  const t = Number(state.app_temp_f);
+  if (Number.isFinite(t) && state.app_temp_f !== '' && (t < 200 || t > 400)) warns.push(`app_temp_f ${t}°F is outside the usual 200–400 range — double-check`);
+  if (state.verified === 'Y' && !state.last_verified) warns.push('verified=Y but last_verified is empty (use the "today" button)');
+  if (state.last_verified && !/^\d{4}-\d{2}-\d{2}$/.test(state.last_verified)) errs.push('last_verified: YYYY-MM-DD');
+  return { errs, warns };
+}
+function quoteCsv(v) { return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function buildCsv() {
+  return COLUMNS.join(',') + '\n' + COLUMNS.map((c) => quoteCsv(String(state[c] ?? ''))).join(',') + '\n';
+}
+function buildSupCsv() {
+  supState.supplier = state.supplier;
+  return SUP_COLUMNS.join(',') + '\n' + SUP_COLUMNS.map((c) => quoteCsv(String(supState[c] ?? ''))).join(',') + '\n';
+}
+// Excel splits clipboard pastes on TABS, not commas — so the copy buttons emit a
+// tab-separated row (raw values, no CSV quoting; tabs/newlines inside a value
+// become spaces). The downloaded .csv files stay true CSV for the merge helper.
+function buildTsvRow(cols, src) {
+  if (src === supState) supState.supplier = state.supplier;
+  // Excel re-parses pasted text: 2026-07-18 becomes a date cell, 1.5 a number cell —
+  // misaligned against the sheet's text-stored cells. Wrapping those as ="…" formulas
+  // forces text (the sheet's storage format); the cell's value is the literal string.
+  const excelText = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) || /^-?\d+(\.\d+)?$/.test(v))
+    ? `="${v.replace(/"/g, '""')}"` : v;
+  return cols.map((c) => excelText(String(src[c] ?? '').replace(/[\t\r\n]+/g, ' '))).join('\t');
+}
+
+// The reverse direction: paste a row copied FROM Excel. Excel's clipboard is
+// tab-separated too, but a cell containing a newline arrives wrapped in quotes
+// (with "" for literal quotes) — parse that dialect properly.
+function parseExcelTsvRow(text) {
+  text = text.replace(/\r/g, '');
+  while (text.endsWith('\n')) text = text.slice(0, -1);
+  const fields = [];
+  let i = 0;
+  while (i <= text.length) {
+    if (text[i] === '"') {
+      let v = ''; i++;
+      for (; i < text.length; i++) {
+        if (text[i] === '"') { if (text[i + 1] === '"') { v += '"'; i++; } else { i++; break; } }
+        else v += text[i];
+      }
+      fields.push(v);
+      if (text[i] === '\t') { i++; if (i === text.length) fields.push(''); }
+      else break;
+    } else {
+      const j = text.indexOf('\t', i);
+      if (j === -1) { fields.push(text.slice(i)); break; }
+      fields.push(text.slice(i, j)); i = j + 1;
+      if (i === text.length) { fields.push(''); break; }
+    }
+  }
+  return fields;
+}
+function applyPastedRow(fields) {
+  const msg = (ok, text) => { const el = document.getElementById('pastemsg');
+    if (el) { el.textContent = (ok ? '✓ ' : '✗ ') + text; el.style.color = ok ? '#2d6a2d' : '#b00020'; } };
+  if (fields.some((f) => f.includes('\n') && fields.length < COLUMNS.length)) { msg(false, 'that looks like several rows — paste one at a time'); return false; }
+  if (fields[0] === 'offering_id' || (fields.length === SUP_COLUMNS.length && fields[0] === 'supplier' && fields[1] === 'makes')) {
+    msg(false, 'that’s the header row — copy a data row'); return false;
+  }
+  if (fields.length === COLUMNS.length) {
+    defaults();
+    COLUMNS.forEach((c, i) => { state[c] = fields[i] ?? state[c]; });
+    const rp = document.getElementById('rowpick'); if (rp) rp.value = '';
+    syncInputs();
+    const exists = DATA.catalog.some((r) => r.offering_id === state.offering_id);
+    msg(true, `loaded ${state.offering_id || '(no id)'}${exists ? ' — existing row, this will be an UPDATE' : ''}`);
+    return true;
+  }
+  if (fields.length === SUP_COLUMNS.length) {
+    supDefaults();
+    SUP_COLUMNS.forEach((c, i) => { supState[c] = fields[i] ?? supState[c]; });
+    state.supplier = supState.supplier;
+    syncInputs();
+    msg(true, `loaded supplier ${supState.supplier || '(unnamed)'}`);
+    return true;
+  }
+  msg(false, `${fields.length} cells — expected ${COLUMNS.length} (Catalog A:AV) or ${SUP_COLUMNS.length} (Suppliers A:L); copy the full row`);
+  return false;
+}
+function supActive() {
+  const sel = form.querySelector('select[data-col=supplier]');
+  return !!sel && sel.value === '__other__' && !!String(state.supplier).trim();
+}
+function refresh() {
+  const n = unknownCount();
+  document.getElementById('unkbadge').textContent =
+    `Engine unknowns: ${n} of ${ENGINE_GATES.length} — rows with fewer unknowns outrank this one`;
+  const sel = form.querySelector('select[data-col=supplier]');
+  const sec = document.getElementById('supsec');
+  if (sec) sec.classList.toggle('gone', !(sel && sel.value === '__other__'));
+  const supBtn = document.getElementById('supcopybtn');
+  if (supBtn) supBtn.classList.toggle('gone', !supActive());
+}
+function showResult() {
+  const { errs, warns } = validate();
+  document.getElementById('problems').textContent = errs.length ? '✗ fix before export:\n' + errs.map((e) => '  • ' + e).join('\n') : '';
+  document.getElementById('warnings').textContent = warns.length ? warns.map((w) => '⚠ ' + w).join('\n') : '';
+  if (errs.length) return null;
+  const csv = buildCsv();
+  document.getElementById('preview').value = supActive() ? csv + '\n' + buildSupCsv() : csv;
+  return csv;
+}
+
+// ── Import fragment (header must match the 48-column contract) ──
+function parseCsv(text) {
+  const rows = []; let row = [], field = '', q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) { if (c === '"') { if (text[i + 1] === '"') { field += '"'; i++; } else q = false; } else field += c; }
+    else if (c === '"') q = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n' || c === '\r') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || row[0] !== '') rows.push(row); row = [];
+    } else field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+function importFragment(text) {
+  const rows = parseCsv(text);
+  if (!rows.length || rows[0].join(',') !== COLUMNS.join(','))
+    return alert('Not an intake fragment: header does not match the 48-column Catalog contract.');
+  if (rows.length < 2) return alert('Fragment has a header but no data row.');
+  defaults();
+  rows[1].forEach((v, i) => { if (i < COLUMNS.length) state[COLUMNS[i]] = v; });
+  syncInputs();
+}
+
+// ── Wire up ──
+defaults(); supDefaults(); build(); syncInputs();
+document.getElementById('dataver').textContent =
+  `Working against published data ${DATA.meta.data_version} (schema ${DATA.meta.schema_version}) — ${DATA.catalog.length} existing offerings.`;
+if (!DATA.catalog.length) document.getElementById('nodata').style.display = '';
+const rowpick = document.getElementById('rowpick');
+for (const r of DATA.catalog) rowpick.appendChild(new Option(`${r.offering_id} — ${r.decoration_string}`, r.offering_id));
+rowpick.onchange = () => {
+  const r = DATA.catalog.find((x) => x.offering_id === rowpick.value);
+  if (r) { rowToState(r); syncInputs(); } };
+document.querySelectorAll('input[name=mode]').forEach((radio) => {
+  radio.onchange = () => document.body.classList.toggle('mode-simple', radio.value === 'simple' && radio.checked);
+});
+document.body.classList.add('mode-simple');
+document.getElementById('resetbtn').onclick = () => { defaults(); supDefaults(); rowpick.value = ''; syncInputs();
+  document.getElementById('preview').value = ''; document.getElementById('problems').textContent = '';
+  document.getElementById('warnings').textContent = ''; };
+document.getElementById('importfile').onchange = (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  const rd = new FileReader(); rd.onload = () => importFragment(rd.result); rd.readAsText(f);
+};
+document.getElementById('pastebox').addEventListener('paste', (e) => {
+  e.preventDefault();
+  applyPastedRow(parseExcelTsvRow(e.clipboardData.getData('text/plain')));
+  e.target.value = ''; e.target.blur();
+});
+document.getElementById('exportbtn').onclick = () => {
+  const csv = showResult(); if (!csv) return;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = `intake_${state.offering_id}_${today().replace(/-/g, '')}.csv`;
+  a.click(); URL.revokeObjectURL(a.href);
+  if (supActive()) {
+    const b = document.createElement('a');
+    b.href = URL.createObjectURL(new Blob([buildSupCsv()], { type: 'text/csv' }));
+    b.download = `intake_supplier_${state.supplier.replace(/[^A-Za-z0-9]+/g, '-')}_${today().replace(/-/g, '')}.csv`;
+    b.click(); URL.revokeObjectURL(b.href);
+  }
+};
+document.getElementById('copybtn').onclick = () => {
+  if (!showResult()) return;
+  navigator.clipboard.writeText(buildTsvRow(COLUMNS, state)).then(() => { document.getElementById('copybtn').textContent = 'Copied ✓ (tab-separated)';
+    setTimeout(() => { document.getElementById('copybtn').textContent = 'Copy row (paste into Excel)'; }, 1500); });
+};
+document.getElementById('supcopybtn').onclick = () => {
+  if (!showResult()) return;
+  navigator.clipboard.writeText(buildTsvRow(SUP_COLUMNS, supState)).then(() => { document.getElementById('supcopybtn').textContent = 'Copied ✓';
+    setTimeout(() => { document.getElementById('supcopybtn').textContent = 'Copy supplier row'; }, 1500); });
+};
+
+// ── Self-test: intake.html?smoke=1 sets the title for headless checks ──
+if (new URLSearchParams(location.search).get('smoke') === '1') {
+  try {
+    const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
+    assert(DATA.catalog.length >= 60, 'data module not loaded');
+    assert(form.querySelectorAll('.fieldrow[data-field]').length === COLUMNS.length, '48 catalog field rows rendered');
+    assert(document.querySelectorAll('.mode-simple .fieldrow.detail').length > 0, 'simple mode hides detail fields');
+    rowToState(DATA.catalog[0]); syncInputs();
+    assert(state.offering_id === DATA.catalog[0].offering_id, 'update-mode prefill');
+    defaults();
+    Object.assign(state, { offering_id: 'SMOKE-001', supplier: Object.keys(DATA.suppliers)[0] || 'X',
+      product_name: 'Smoke Test', category: 'DTF', status: 'Approved',
+      decoration_string: 'Transfer - Smoke Test', preference_rank: '50' });
+    const { errs } = validate();
+    assert(errs.length === 0, 'valid minimal row has no errors: ' + errs.join('; '));
+    const parsed = parseCsv(buildCsv());
+    assert(parsed.length === 2 && parsed[1].length === COLUMNS.length, 'export row round-trips at 48 fields');
+    const supSel = form.querySelector('select[data-col=supplier]');
+    supSel.value = '__other__'; supSel.onchange();
+    const otherInp = supSel.parentElement.querySelector('input');
+    otherInp.value = 'Smoke Supply Co.'; otherInp.oninput();
+    assert(!document.getElementById('supsec').classList.contains('gone'), 'new-supplier section reveals');
+    supState.preference_weight = '50';
+    const sup = parseCsv(buildSupCsv());
+    assert(sup.length === 2 && sup[1].length === SUP_COLUMNS.length, 'supplier fragment exports 12 fields');
+    assert(sup[1][0] === 'Smoke Supply Co.', 'supplier fragment carries the typed name');
+    assert(COLUMNS.every((c) => TIPS[c] && TIPS[c].what && TIPS[c].why && TIPS[c].how), 'tooltip (what/why/how) for every catalog column');
+    assert(SUP_COLUMNS.every((c) => c === 'supplier' || (SUP_TIPS[c] && SUP_TIPS[c].what)), 'tooltip for every supplier column');
+    assert(document.querySelectorAll('.tipcard').length === COLUMNS.length + SUP_COLUMNS.length - 1, 'tip cards rendered on all field labels');
+    assert(buildTsvRow(COLUMNS, state).split('\t').length === COLUMNS.length, 'TSV copy spans 48 columns');
+    assert(buildTsvRow(SUP_COLUMNS, supState).split('\t').length === SUP_COLUMNS.length, 'supplier TSV copy spans 12 columns');
+    state.app_temp_f = '285'; state.last_verified = '2026-07-18';
+    const tsvOut = buildTsvRow(COLUMNS, state).split('\t');
+    assert(tsvOut[COLUMNS.indexOf('app_temp_f')] === '="285"' && tsvOut[COLUMNS.indexOf('last_verified')] === '="2026-07-18"'
+      && tsvOut[COLUMNS.indexOf('status')] === 'Approved', 'numbers/dates copy as ="…" text formulas, plain text stays raw');
+    assert(/^\d{4}-\d{2}-\d{2}$/.test(today()), 'today() is local YYYY-MM-DD');
+    state.app_temp_f = ''; state.last_verified = '';
+    const q = parseExcelTsvRow('a\t"line1\nline2 ""quoted"""\tc');
+    assert(q.length === 3 && q[1] === 'line1\nline2 "quoted"', 'Excel-quoted cell parses');
+    const tsv48 = COLUMNS.map((c) => c === 'offering_id' ? 'PASTE-001' : (c === 'order_notes' ? 'has, commas; semis' : (FLAGS.has(c) ? 'TBD' : ''))).join('\t');
+    assert(applyPastedRow(parseExcelTsvRow(tsv48)) && state.offering_id === 'PASTE-001' && state.order_notes === 'has, commas; semis', 'pasted Excel catalog row fills the form');
+    assert(applyPastedRow(parseExcelTsvRow(['Paste Supply Co','Y','N','N','DTF','3','','Y','24','Approved','note','2026-07-18'].join('\t')))
+      && supState.makes === 'Y' && state.supplier === 'Paste Supply Co', 'pasted Excel supplier row fills the sub-form');
+    assert(!applyPastedRow(parseExcelTsvRow(COLUMNS.join('\t'))), 'header-row paste rejected');
+    document.title = 'KCP-INTAKE PASS';
+  } catch (e) { document.title = 'KCP-INTAKE FAIL: ' + e.message; }
+}
+</script>
+</body>
+</html>
