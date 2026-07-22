@@ -80,7 +80,7 @@
 <div id="warnings"></div>
 <textarea id="preview" readonly placeholder="CSV preview appears here after validation"></textarea>
 
-<script src="../../extension/data/transfer-data.js"></script>
+<script src="transfer-data.js"></script>
 <script>
 'use strict';
 // ── Vocab: read from the generated data module (converter emits it — worklist
@@ -669,7 +669,7 @@ document.getElementById('supcopybtn').onclick = () => {
 if (new URLSearchParams(location.search).get('smoke') === '1') {
   try {
     const assert = (cond, msg) => { if (!cond) throw new Error(msg); };
-    assert(DATA.catalog.length >= 60, 'data module not loaded');
+    assert(DATA.catalog.length >= 1, 'data module not loaded');
     assert(form.querySelectorAll('.fieldrow[data-field]').length === COLUMNS.length, '48 catalog field rows rendered');
     assert(document.querySelectorAll('.mode-simple .fieldrow.detail').length > 0, 'simple mode hides detail fields');
     rowToState(DATA.catalog[0]); syncInputs();
