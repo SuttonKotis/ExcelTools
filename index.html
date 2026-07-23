@@ -57,11 +57,11 @@
 <div class="bar">
   <label>Mode:</label>
   <label><input type="radio" name="mode" value="simple" checked> Simple (minimum viable)</label>
-  <label><input type="radio" name="mode" value="detailed"> Detailed (all 48 columns)</label>
+  <label><input type="radio" name="mode" value="detailed"> Detailed (all 50 columns)</label>
   <span style="flex:1"></span>
   <label>Update existing:</label><select id="rowpick"><option value="">— start blank —</option></select>
   <label class="plain" style="cursor:pointer">Import fragment <input type="file" id="importfile" accept=".csv" style="display:none"></label>
-  <input type="text" id="pastebox" placeholder="⌘V an Excel row here" size="20" title="In Excel: select the whole row (Catalog A:AV or Suppliers A:L), copy, then click here and paste — the form fills from the live sheet.">
+  <input type="text" id="pastebox" placeholder="⌘V an Excel row here" size="20" title="In Excel: select the whole row (Catalog A:AX or Suppliers A:L), copy, then click here and paste — the form fills from the live sheet.">
   <span id="pastemsg" style="font-size:.8rem"></span>
   <button class="plain" id="resetbtn">Reset</button>
 </div>
@@ -90,10 +90,12 @@ const KCP_FALLBACK_VOCAB = {
   statuses: ['Approved', 'Phase-out', 'Discontinued'],
   peels: ['TBD', 'H', 'W', 'C', 'H/C', 'W/C', ''],
   effects: ['puff', 'metallic', 'holographic', 'flock', 'glitter', 'reflective', 'glow', 'uv-shift', '3d', 'dye-block', 'neon'],
+  names_numbers_states: ['Y', 'Gang', 'N'],
+  gang_sheet_states: ['Y', 'N', 'N/A'],
 };
 const VOCAB = (typeof KCP_TRANSFER_DATA !== 'undefined' && KCP_TRANSFER_DATA.vocab) ? KCP_TRANSFER_DATA.vocab : KCP_FALLBACK_VOCAB;
 
-// The 48 Catalog columns, in exact sheet order — the export contract.
+// The 50 Catalog columns, in exact sheet order — the export contract.
 const COLUMNS = ['offering_id','supplier','product_name','category','status','decoration_string','preference_rank',
   'full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects',
   'over_seam_ok','hat_ok','odd_item_ok','dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok',
@@ -101,12 +103,21 @@ const COLUMNS = ['offering_id','supplier','product_name','category','status','de
   'fab_sublimated_poly','fab_cordura','fab_leather','fab_neoprene','fab_polypropylene',
   'app_temp_f','press_time_sec','peel','layerable','thickness_microns','matte_gloss_0_5','detail_cut_0_5',
   'stretchability_0_5','carrier_tack_0_3','cpsia_certified','min_w_in','min_h_in','max_w_in','max_h_in','min_qty',
-  'order_notes','verified','last_verified'];
+  'order_notes','verified','last_verified','names_numbers','gang_sheet'];
 
 const FLAGS = new Set(['full_color','pantone_match','metallic_ok','fine_detail','over_seam_ok','hat_ok','odd_item_ok',
   'dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok','verified','layerable','cpsia_certified',
   'fab_cotton_100','fab_preshrunk_cotton','fab_polyester_100','fab_lycra_spandex_blends','fab_nylon',
   'fab_sublimated_poly','fab_cordura','fab_leather','fab_neoprene','fab_polypropylene']);
+
+// Chip columns that aren't plain Y/N — same widget, longer vocab (added 2026-07-22).
+// Values come from the data module when it's loaded, so the sheet stays the authority.
+const ENUMS = {
+  names_numbers: [...(VOCAB.names_numbers_states || ['Y','Gang','N']), 'TBD'],
+  gang_sheet: [...(VOCAB.gang_sheet_states || ['Y','N','N/A']), 'TBD'],
+};
+const isChip = (col) => FLAGS.has(col) || col in ENUMS;
+const chipVals = (col) => ENUMS[col] || ['Y', 'N', 'TBD'];
 
 const NUMS = new Set(['preference_rank','max_spot_colors','app_temp_f','press_time_sec','thickness_microns',
   'matte_gloss_0_5','detail_cut_0_5','stretchability_0_5','carrier_tack_0_3','min_w_in','min_h_in','max_w_in','max_h_in','min_qty']);
@@ -114,13 +125,15 @@ const NUMS = new Set(['preference_rank','max_spot_colors','app_temp_f','press_ti
 // Simple mode = identity + the columns the recommendation engine actually reads
 // most often (the "minimum viable to be used" set). Everything else exports TBD/blank.
 const SIMPLE = new Set(['offering_id','supplier','product_name','category','status','decoration_string','preference_rank',
-  'full_color','app_temp_f','over_seam_ok','hat_ok','odd_item_ok','dye_block_built_in',
+  'full_color','app_temp_f','over_seam_ok','hat_ok','odd_item_ok','dye_block_built_in','names_numbers','gang_sheet',
   'fab_cotton_100','fab_polyester_100','fab_lycra_spandex_blends','max_w_in','max_h_in','min_qty','verified','last_verified']);
 
 // Engine-consumed gates (unknowns here demote the row in ranking).
 const ENGINE_GATES = ['app_temp_f','full_color','pantone_match','metallic_ok','fine_detail','over_seam_ok','hat_ok',
-  'odd_item_ok','dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok','fab_cotton_100',
-  'fab_polyester_100','fab_lycra_spandex_blends','fab_nylon','fab_sublimated_poly','fab_cordura','fab_leather',
+  'odd_item_ok','dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok','names_numbers',
+  // gang_sheet is deliberately NOT here — it's tracked, not ranked, so a TBD there
+  // costs the row nothing. Still worth filling; it's in SIMPLE mode for that reason.
+  'fab_cotton_100','fab_polyester_100','fab_lycra_spandex_blends','fab_nylon','fab_sublimated_poly','fab_cordura','fab_leather',
   'fab_neoprene','fab_polypropylene','max_w_in','max_h_in','min_qty'];
 
 const GROUPS = [
@@ -139,6 +152,8 @@ const GROUPS = [
   ['Physical, size & quantity', 'Hand-feel specs, the printable window, MOQ.',
     ['thickness_microns','matte_gloss_0_5','detail_cut_0_5','stretchability_0_5','carrier_tack_0_3','cpsia_certified',
      'min_w_in','min_h_in','max_w_in','max_h_in','min_qty']],
+  ['Names / numbers & gang sheet', 'Jersey names+numbers handling, and whether we can supply our own gang sheet.',
+    ['names_numbers','gang_sheet']],
   ['Housekeeping', 'Free-text quirks + verification state.', ['order_notes','verified','last_verified']],
 ];
 
@@ -155,6 +170,8 @@ const HINTS = {
   verified: 'Y only after checking the row against the supplier’s real spec',
   last_verified: 'YYYY-MM-DD',
   order_notes: 'quirks that ride along on the result card. Facts belong in real columns, not here',
+  names_numbers: 'Y = handles jersey names/numbers · Gang = only if we build the gang sheet · N = won’t take them at all',
+  gang_sheet: 'Can we supply our own gang sheet at all? Y / N / N/A (Contract Decorator). Must be Y for a names_numbers of Gang',
 };
 
 // ── Tooltips: what is this? why does the tool care? how do I tell? ──
@@ -207,9 +224,11 @@ const TIPS = {
   order_notes: { what: 'Free-text quirks that ride along on the result card: portals, contacts, adhesive notes.', why: 'Display only — anything decision-bearing belongs in a real column, not here.', how: 'Whatever production must know at order time ("order via portal; Daniel & Jen").' },
   verified: { what: 'A human has checked this WHOLE row against the supplier’s actual published spec.', why: 'Unverified rows still recommend, but the artist sees a ⚠ on every pick.', how: 'Only flip to Y after a real side-by-side check — and set last_verified when you do. TBD cells can remain; verified says the filled cells are right.' },
   last_verified: { what: 'The date of that check, YYYY-MM-DD.', why: 'Staleness audit — old dates are re-check candidates.', how: 'The "today" button when you verify.' },
+  names_numbers: { what: 'Can this vendor handle a job with names + numbers on it (think jersey numbers) as ordinary artwork? Three buckets, not Y/N.', why: 'When a job carries names/numbers, N rows are eliminated and Gang rows survive with a ⚠ (they cost us the extra work of building the gang sheet), so a clean Y wins the tie.', how: 'Takes them natively, no fuss → Y. Only if WE build the gang sheet ourselves → Gang. Won’t take them at all → N. Not confirmed → TBD. You almost always have to ask the vendor; it varies by vendor AND by transfer.' },
+  gang_sheet: { what: 'Can we supply our OWN gang sheet to this vendor for this transfer?', why: 'Tracked capability, and the thing that makes a names_numbers of Gang possible — the converter rejects Gang on a row that says we can’t gang-sheet here.', how: 'Vendor accepts a gang sheet we build → Y. Doesn’t → N. Contract Decorator, where gang-sheeting isn’t a thing → N/A. Unsure → TBD.' },
 };
 const FX_TIPS = { puff: '3D foam — raised, pillowy surface', metallic: 'metal-look finish (vinyl look, not metallic ink)', holographic: 'rainbow-shifting foil look', flock: 'fuzzy velvet texture', glitter: 'sparkle flake', reflective: 'retro-reflective — lights up in headlights (safety wear)', glow: 'glow-in-the-dark', 'uv-shift': 'changes color in sunlight', '3d': 'dimensional/domed surface', 'dye-block': 'variant with a dye-blocker layer', neon: 'fluorescent brights' };
-const FLAG_TIP = { Y: 'Yes — confirmed for this product', N: 'No — confirmed NOT for this product ("we don’t rate that" counts as N)', TBD: 'Honestly unknown — never punished, but known facts rank higher. Fill it when the supplier answers.' };
+const FLAG_TIP = { Y: 'Yes — confirmed for this product', N: 'No — confirmed NOT for this product ("we don’t rate that" counts as N)', Gang: 'Only if we build the gang sheet ourselves — still usable, but the tool warns (extra setup / upcharge on our end)', 'N/A': 'Not applicable — e.g. a Contract Decorator, where gang-sheeting isn’t a thing we do', TBD: 'Honestly unknown — never punished, but known facts rank higher. Fill it when the supplier answers.' };
 
 // ── New-supplier sub-form: the Suppliers-tab row contract ──
 const SUP_COLUMNS = ['supplier','makes','applies','cuts','categories','turnaround_days_make','turnaround_days_apply',
@@ -242,7 +261,7 @@ const DATA = (typeof KCP_TRANSFER_DATA !== 'undefined') ? KCP_TRANSFER_DATA
 
 const state = {};
 function defaults() {
-  for (const c of COLUMNS) state[c] = FLAGS.has(c) ? 'TBD' : (c === 'peel' ? 'TBD' : (c === 'status' ? 'Approved' : ''));
+  for (const c of COLUMNS) state[c] = isChip(c) ? 'TBD' : (c === 'peel' ? 'TBD' : (c === 'status' ? 'Approved' : ''));
 }
 const supState = {};
 function supDefaults() {
@@ -259,11 +278,11 @@ function tipHtml(col, hints, tips) {
   return code + (hints[col] ? `<small>${hints[col]}</small>` : '');
 }
 function fieldControl(col) {
-  if (FLAGS.has(col)) {
+  if (isChip(col)) {
     const div = document.createElement('div'); div.className = 'chips'; div.dataset.col = col;
-    for (const v of ['Y', 'N', 'TBD']) {
+    for (const v of chipVals(col)) {
       const b = document.createElement('button'); b.type = 'button'; b.className = 'chip'; b.textContent = v;
-      b.title = FLAG_TIP[v];
+      b.title = FLAG_TIP[v] || '';
       b.onclick = () => { state[col] = v; paintChips(div); refresh(); };
       div.appendChild(b);
     }
@@ -443,7 +462,7 @@ function rowToState(row) {
     if (v === undefined) continue;
     if (v === true) state[col] = 'Y';
     else if (v === false) state[col] = 'N';
-    else if (v === null) state[col] = FLAGS.has(col) ? 'TBD' : '';
+    else if (v === null) state[col] = isChip(col) ? 'TBD' : '';
     else if (Array.isArray(v)) state[col] = v.join('; ');
     else state[col] = String(v);
   }
@@ -561,7 +580,7 @@ function applyPastedRow(fields) {
     msg(true, `loaded supplier ${supState.supplier || '(unnamed)'}`);
     return true;
   }
-  msg(false, `${fields.length} cells — expected ${COLUMNS.length} (Catalog A:AV) or ${SUP_COLUMNS.length} (Suppliers A:L); copy the full row`);
+  msg(false, `${fields.length} cells — expected ${COLUMNS.length} (Catalog A:AX) or ${SUP_COLUMNS.length} (Suppliers A:L); copy the full row`);
   return false;
 }
 function supActive() {
@@ -694,7 +713,7 @@ if (new URLSearchParams(location.search).get('smoke') === '1') {
     assert(COLUMNS.every((c) => TIPS[c] && TIPS[c].what && TIPS[c].why && TIPS[c].how), 'tooltip (what/why/how) for every catalog column');
     assert(SUP_COLUMNS.every((c) => c === 'supplier' || (SUP_TIPS[c] && SUP_TIPS[c].what)), 'tooltip for every supplier column');
     assert(document.querySelectorAll('.tipcard').length === COLUMNS.length + SUP_COLUMNS.length - 1, 'tip cards rendered on all field labels');
-    assert(buildTsvRow(COLUMNS, state).split('\t').length === COLUMNS.length, 'TSV copy spans 48 columns');
+    assert(buildTsvRow(COLUMNS, state).split('\t').length === COLUMNS.length, `TSV copy spans all ${COLUMNS.length} columns`);
     assert(buildTsvRow(SUP_COLUMNS, supState).split('\t').length === SUP_COLUMNS.length, 'supplier TSV copy spans 12 columns');
     state.app_temp_f = '285'; state.last_verified = '2026-07-18';
     const tsvOut = buildTsvRow(COLUMNS, state).split('\t');
@@ -704,8 +723,14 @@ if (new URLSearchParams(location.search).get('smoke') === '1') {
     state.app_temp_f = ''; state.last_verified = '';
     const q = parseExcelTsvRow('a\t"line1\nline2 ""quoted"""\tc');
     assert(q.length === 3 && q[1] === 'line1\nline2 "quoted"', 'Excel-quoted cell parses');
-    const tsv48 = COLUMNS.map((c) => c === 'offering_id' ? 'PASTE-001' : (c === 'order_notes' ? 'has, commas; semis' : (FLAGS.has(c) ? 'TBD' : ''))).join('\t');
-    assert(applyPastedRow(parseExcelTsvRow(tsv48)) && state.offering_id === 'PASTE-001' && state.order_notes === 'has, commas; semis', 'pasted Excel catalog row fills the form');
+    const tsvFull = COLUMNS.map((c) => c === 'offering_id' ? 'PASTE-001'
+      : (c === 'order_notes' ? 'has, commas; semis'
+      : (c === 'names_numbers' ? 'Gang' : (c === 'gang_sheet' ? 'N/A' : (isChip(c) ? 'TBD' : ''))))).join('\t');
+    assert(applyPastedRow(parseExcelTsvRow(tsvFull)) && state.offering_id === 'PASTE-001' && state.order_notes === 'has, commas; semis', 'pasted Excel catalog row fills the form');
+    // Round-trip the two non-Y/N chip columns: Excel value in → same value back out.
+    assert(state.names_numbers === 'Gang' && state.gang_sheet === 'N/A', 'Gang / N/A survive an Excel paste');
+    const back = buildTsvRow(COLUMNS, state).split('\t');
+    assert(back[COLUMNS.indexOf('names_numbers')] === 'Gang' && back[COLUMNS.indexOf('gang_sheet')] === 'N/A', 'Gang / N/A copy back out to Excel unchanged');
     assert(applyPastedRow(parseExcelTsvRow(['Paste Supply Co','Y','N','N','DTF','3','','Y','24','Approved','note','2026-07-18'].join('\t')))
       && supState.makes === 'Y' && state.supplier === 'Paste Supply Co', 'pasted Excel supplier row fills the sub-form');
     assert(!applyPastedRow(parseExcelTsvRow(COLUMNS.join('\t'))), 'header-row paste rejected');
