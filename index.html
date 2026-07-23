@@ -97,13 +97,24 @@ const VOCAB = (typeof KCP_TRANSFER_DATA !== 'undefined' && KCP_TRANSFER_DATA.voc
 
 // The 50 Catalog columns, in exact sheet order — the export contract.
 const COLUMNS = ['offering_id','supplier','product_name','category','status','decoration_string','preference_rank',
-  'full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects',
+  'full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects','names_numbers',
   'over_seam_ok','hat_ok','odd_item_ok','dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok',
   'fab_cotton_100','fab_preshrunk_cotton','fab_polyester_100','fab_lycra_spandex_blends','fab_nylon',
   'fab_sublimated_poly','fab_cordura','fab_leather','fab_neoprene','fab_polypropylene',
   'app_temp_f','press_time_sec','peel','layerable','thickness_microns','matte_gloss_0_5','detail_cut_0_5',
   'stretchability_0_5','carrier_tack_0_3','cpsia_certified','min_w_in','min_h_in','max_w_in','max_h_in','min_qty',
-  'order_notes','verified','last_verified','names_numbers','gang_sheet'];
+  'gang_sheet','order_notes','verified','last_verified'];
+
+// Excel paste/copy is POSITIONAL — if this list drifts from the sheet's real column
+// order, every pasted row silently lands in the wrong fields. The converter emits the
+// live header, so check it rather than trust the copy above. (Falls back silently when
+// no data module is loaded; the smoke test asserts it hard.)
+const COLUMN_ORDER_OK = !VOCAB.catalog_columns
+  || (VOCAB.catalog_columns.length === COLUMNS.length
+      && VOCAB.catalog_columns.every((c, i) => c === COLUMNS[i]));
+if (!COLUMN_ORDER_OK) {
+  console.error('KCP intake: COLUMNS is out of sync with the sheet header.\n  sheet:', VOCAB.catalog_columns, '\n  form :', COLUMNS);
+}
 
 const FLAGS = new Set(['full_color','pantone_match','metallic_ok','fine_detail','over_seam_ok','hat_ok','odd_item_ok',
   'dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok','verified','layerable','cpsia_certified',
@@ -140,7 +151,7 @@ const GROUPS = [
   ['Identity & ordering', 'Who sells it, what it is, how it ranks. All required.',
     ['offering_id','supplier','product_name','category','status','decoration_string','preference_rank']],
   ['Artwork capability', 'Can it render this art?',
-    ['full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects']],
+    ['full_color','max_spot_colors','pantone_match','metallic_ok','fine_detail','effects','names_numbers']],
   ['Placement', 'Can it be pressed there?', ['over_seam_ok','hat_ok','odd_item_ok']],
   ['Garment protection', 'Will the garment ruin the print?',
     ['dye_block_built_in','waterproof_ok','light_garments_only','pigment_dye_ok']],
@@ -151,9 +162,7 @@ const GROUPS = [
     ['app_temp_f','press_time_sec','peel','layerable']],
   ['Physical, size & quantity', 'Hand-feel specs, the printable window, MOQ.',
     ['thickness_microns','matte_gloss_0_5','detail_cut_0_5','stretchability_0_5','carrier_tack_0_3','cpsia_certified',
-     'min_w_in','min_h_in','max_w_in','max_h_in','min_qty']],
-  ['Names / numbers & gang sheet', 'Jersey names+numbers handling, and whether we can supply our own gang sheet.',
-    ['names_numbers','gang_sheet']],
+     'min_w_in','min_h_in','max_w_in','max_h_in','min_qty','gang_sheet']],
   ['Housekeeping', 'Free-text quirks + verification state.', ['order_notes','verified','last_verified']],
 ];
 
@@ -714,6 +723,12 @@ if (new URLSearchParams(location.search).get('smoke') === '1') {
     assert(SUP_COLUMNS.every((c) => c === 'supplier' || (SUP_TIPS[c] && SUP_TIPS[c].what)), 'tooltip for every supplier column');
     assert(document.querySelectorAll('.tipcard').length === COLUMNS.length + SUP_COLUMNS.length - 1, 'tip cards rendered on all field labels');
     assert(buildTsvRow(COLUMNS, state).split('\t').length === COLUMNS.length, `TSV copy spans all ${COLUMNS.length} columns`);
+    // The paste/copy contract is positional — COLUMNS must equal the sheet's real header.
+    assert(COLUMN_ORDER_OK, 'COLUMNS matches the sheet column order emitted by the converter');
+    assert(!VOCAB.catalog_columns || VOCAB.catalog_columns.indexOf('names_numbers') === VOCAB.catalog_columns.indexOf('effects') + 1,
+      'names_numbers sits in the artwork block, right after effects');
+    assert(!VOCAB.catalog_columns || VOCAB.catalog_columns.indexOf('gang_sheet') === VOCAB.catalog_columns.indexOf('min_qty') + 1,
+      'gang_sheet sits in the ordering block, right after min_qty');
     assert(buildTsvRow(SUP_COLUMNS, supState).split('\t').length === SUP_COLUMNS.length, 'supplier TSV copy spans 12 columns');
     state.app_temp_f = '285'; state.last_verified = '2026-07-18';
     const tsvOut = buildTsvRow(COLUMNS, state).split('\t');
