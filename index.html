@@ -20,9 +20,16 @@
   .fieldrow small { display: block; font-weight: 400; color: #888; }
   .chips { display: flex; gap: 6px; flex-wrap: wrap; }
   .chip { border: 1px solid #bbb; background: #fff; border-radius: 14px; padding: 3px 12px; cursor: pointer; font: inherit; font-size: .85rem; }
-  .chip.on-Y { background: #d7efd7; border-color: #3a8f3a; font-weight: 700; }
-  .chip.on-N { background: #f6d9d9; border-color: #b04a4a; font-weight: 700; }
-  .chip.on-TBD { background: #fdf0cd; border-color: #c09a2e; font-weight: 700; }
+  /* .on = generic "this one is picked" (bold + solid border), so a value with no
+     colour rule of its own still reads as selected. Colours refine it per value. */
+  .chip.on { background: #e9e9e9; border-color: #666; font-weight: 700; }
+  .chip.on-y { background: #d7efd7; border-color: #3a8f3a; }
+  .chip.on-n { background: #f6d9d9; border-color: #b04a4a; }
+  .chip.on-tbd { background: #fdf0cd; border-color: #c09a2e; }
+  /* Gang = works, but it costs us the gang-sheet build — the tool warns on it, so it
+     gets a caution colour rather than the plain green of a clean yes. */
+  .chip.on-gang { background: #fbe0c9; border-color: #c2702e; }
+  .chip.on-n-a { background: #e4e4e4; border-color: #8a8a8a; }
   .chip.fx-on { background: #dbe7fb; border-color: #3b6dc7; font-weight: 700; }
   .mode-simple .detail { display: none; }
   .gone { display: none !important; }
@@ -410,9 +417,14 @@ function buildSup() {
 }
 
 // ── State ⇄ UI sync ──
+// Chip values become CSS class tokens, so slugify: 'N/A' -> 'n-a', 'Gang' -> 'gang'.
+// (A raw value can't be used — the slash in N/A isn't a usable class token.) Any new
+// vocabulary value gets the generic selected look until it's given its own rule below.
+const chipClass = (v) => 'on-' + String(v).toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
 function paintChips(div) {
   const col = div.dataset.col;
-  for (const b of div.children) b.className = 'chip' + (b.textContent === state[col] ? ` on-${state[col]}` : '');
+  for (const b of div.children) b.className = 'chip' + (b.textContent === state[col] ? ` on ${chipClass(state[col])}` : '');
 }
 function paintFx(div) {
   const set = new Set((state.effects || '').split(';').map((s) => s.trim()).filter(Boolean));
@@ -725,6 +737,20 @@ if (new URLSearchParams(location.search).get('smoke') === '1') {
     assert(buildTsvRow(COLUMNS, state).split('\t').length === COLUMNS.length, `TSV copy spans all ${COLUMNS.length} columns`);
     // The paste/copy contract is positional — COLUMNS must equal the sheet's real header.
     assert(COLUMN_ORDER_OK, 'COLUMNS matches the sheet column order emitted by the converter');
+    // Every selectable chip value must LOOK selected when picked — catches a new
+    // vocabulary value being added without a matching style (Gang/N/A did exactly that).
+    for (const col of Object.keys(ENUMS).concat(['full_color'])) {
+      for (const v of chipVals(col)) {
+        state[col] = v; syncInputs();
+        const div = form.querySelector(`.chips[data-col="${col}"]`);
+        const picked = [...div.children].filter((b) => b.classList.contains('on'));
+        assert(picked.length === 1 && picked[0].textContent === v, `${col}="${v}" renders as selected`);
+        const bg = getComputedStyle(picked[0]).backgroundColor;
+        assert(bg && bg !== 'rgb(255, 255, 255)', `${col}="${v}" selected chip is visually distinct from unselected`);
+      }
+      state[col] = 'TBD';
+    }
+    syncInputs();
     assert(!VOCAB.catalog_columns || VOCAB.catalog_columns.indexOf('names_numbers') === VOCAB.catalog_columns.indexOf('effects') + 1,
       'names_numbers sits in the artwork block, right after effects');
     assert(!VOCAB.catalog_columns || VOCAB.catalog_columns.indexOf('gang_sheet') === VOCAB.catalog_columns.indexOf('min_qty') + 1,
